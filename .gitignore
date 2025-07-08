@@ -1,5 +1,7 @@
 # build & dev artefacts
 vault.db
+vault.db-shm
+vault.db-wal
 *.exe
 *.out
 *.log

@@ -1,0 +1,306 @@
+openapi: 3.0.3
+info:
+  title: GoPass Zero-Knowledge Password-Manager API
+  version: "1.0.0"
+  description: |
+    REST interface for a self-hosted, zero-knowledge password manager.
+    All ciphertext is produced client-side with AES-256-GCM; the server
+    never sees secrets in plaintext.
+
+servers:
+  - url: https://api.example.com/v1   // needs to be updated
+    description: Production          
+  - url: http://localhost:8080/v1
+    description: Local dev
+
+tags:
+  - name: Auth
+  - name: Vault Items
+  - name: Operations
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user and seed cryptography
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegisterResponse' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "429": { $ref: '#/components/responses/RateLimit' }
+      x-rate-limit: strict
+      x-idempotency-key: recommended
+  /auth/salt/{email}:
+    get:
+      tags: [Auth]
+      summary: Fetch Argon2 salt for the supplied e-mail
+      operationId: getSalt
+      parameters:
+        - in: path
+          name: email
+          required: true
+          schema: { type: string, format: email }
+      responses:
+        "200":
+          description: Returned salt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SaltResponse' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "429": { $ref: '#/components/responses/RateLimit' }
+      x-rate-limit: strict
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in and receive JWT + encrypted VK
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        "200":
+          description: Login success
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "429": { $ref: '#/components/responses/RateLimit' }
+      x-rate-limit: strict
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Exchange refresh-token for new access token
+      operationId: refresh
+      responses:
+        "200":
+          description: New access token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefreshResponse' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+      security:
+        - cookieAuth: []
+      x-rate-limit: medium
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke the current refresh token
+      operationId: logout
+      responses:
+        "204":
+          description: Logged out
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      x-rate-limit: medium
+  /auth/change-password:
+    post:
+      tags: [Auth]
+      summary: Rotate master password and re-wrap vault key
+      operationId: changePassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangePasswordRequest' }
+      responses:
+        "204": { description: Password changed }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+      security:
+        - bearerAuth: []
+      x-rate-limit: strict
+  /items:
+    get:
+      tags: [Vault Items]
+      summary: List encrypted vault items updated since a sync version
+      operationId: listItems
+      parameters:
+        - in: query
+          name: since
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Return only items with version > since
+      responses:
+        "200":
+          description: Items diff
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListItemsResponse' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+      security:
+        - bearerAuth: []
+      x-rate-limit: high
+    post:
+      tags: [Vault Items]
+      summary: Create or update an item (idempotent upsert)
+      operationId: upsertItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpsertItemRequest' }
+      responses:
+        "201":
+          description: Item created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpsertItemResponse' }
+        "200":
+          description: Item updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpsertItemResponse' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "409": { $ref: '#/components/responses/Conflict' }
+      security:
+        - bearerAuth: []
+      x-rate-limit: high
+      x-idempotency-key: supported
+  /items/{id}:
+    delete:
+      tags: [Vault Items]
+      summary: Soft-delete an item
+      operationId: deleteItem
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Item deleted }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+      security:
+        - bearerAuth: []
+      x-rate-limit: high
+  /healthz:
+    get:
+      tags: [Operations]
+      summary: Liveness probe
+      operationId: healthz
+      responses:
+        "200":
+          description: OK
+          content:
+            text/plain:
+              schema: { type: string, example: ok }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: refresh
+  responses:
+    BadRequest:
+      description: Invalid request payload
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: Invalid or expired credentials
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: Version mismatch / optimistic-lock failure
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    RateLimit:
+      description: Too many requests
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [email, salt, pwd_hash, vk_enc]
+      properties:
+        email:   { type: string, format: email }
+        salt:    { type: string, format: byte }
+        pwd_hash: { type: string, format: byte }
+        vk_enc:  { type: string, format: byte }
+    RegisterResponse:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+    SaltResponse:
+      type: object
+      properties:
+        salt: { type: string, format: byte }
+    LoginRequest:
+      type: object
+      required: [email, pwd_hash]
+      properties:
+        email:    { type: string, format: email }
+        pwd_hash: { type: string, format: byte }
+    LoginResponse:
+      type: object
+      properties:
+        access:  { type: string }
+        refresh: { type: string }
+        vk_enc:  { type: string, format: byte }
+    RefreshResponse:
+      type: object
+      properties:
+        access: { type: string }
+    ChangePasswordRequest:
+      type: object
+      required: [old_pwd_hash, new_salt, new_pwd_hash, new_vk_enc]
+      properties:
+        old_pwd_hash: { type: string, format: byte }
+        new_salt:     { type: string, format: byte }
+        new_pwd_hash: { type: string, format: byte }
+        new_vk_enc:   { type: string, format: byte }
+    UpsertItemRequest:
+      type: object
+      required: [enc_blob, version]
+      properties:
+        id:        { type: string, format: uuid, nullable: true }
+        enc_blob:  { type: string, format: byte }
+        version:   { type: integer, minimum: 0 }
+    UpsertItemResponse:
+      type: object
+      properties:
+        version: { type: integer, minimum: 0 }
+    Item:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        enc_blob:   { type: string, format: byte }
+        version:    { type: integer }
+        deleted:    { type: boolean }
+        updated_at: { type: string, format: date-time }
+    ListItemsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Item' }
+        latest: { type: integer }
+    ErrorResponse:
+      type: object
+      properties:
+        error:   { type: string, example: invalid_request }
+        message: { type: string, example: Human-readable explanation. }
+
