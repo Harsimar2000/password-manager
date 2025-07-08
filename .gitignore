@@ -1,0 +1,13 @@
+# build & dev artefacts
+vault.db
+*.exe
+*.out
+*.log
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Go tools
+coverage*
+
