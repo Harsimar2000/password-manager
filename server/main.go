@@ -1,8 +1,8 @@
 package main
 
 import (
-	"fmt"
 	"log"
+	"net/http"
 
 	"github.com/Harsimar2000/password-manager/database"
 )
@@ -14,7 +14,10 @@ func main() {
 	}
 	defer db.Close()
 
-	var tables []string
-	_ = db.Select(&tables, "SELECT name FROM sqlite_master WHERE type='table'")
-	fmt.Println("SQLite ready, tables:", tables)
+	http.HandleFunc("/v1/auth/register", registerHandler(db))
+
+	log.Println("🔒 password-manager API listening on :8080")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		log.Fatal(err)
+	}
 }
