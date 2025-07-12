@@ -23,6 +23,10 @@ type registerationResponse struct {
 	UserID string `json:"user_id"`
 }
 
+type saltResponse struct {
+	Salt []byte `json:"salt"`
+}
+
 /* Argon2 parameter  */
 
 var (
@@ -95,5 +99,45 @@ func registerHandler(db *sqlx.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(res.UserID)
+	}
+}
+
+func saltHandler(db *sqlx.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+
+		email, found := strings.CutPrefix(r.URL.Path, "/v1/salt/")
+
+		if found == false {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+
+		var count int
+		err := db.QueryRow("SELECT count(*) FROM users WHERE email = ?", email).Scan(&count)
+
+		if err != nil {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+
+		if count == 1 {
+			err := db.QueryRow("select salt from users where email=?", email).Scan(&salt)
+			fmt.Println(salt)
+			if err != nil {
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+			}
+		} else {
+			http.Error(w, "Wrong email address", http.StatusBadRequest)
+		}
+
+		salt := make([]byte, 16)
+		var res saltResponse
+		res.Salt = salt
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(res.Salt)
 	}
 }

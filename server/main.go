@@ -15,6 +15,7 @@ func main() {
 	defer db.Close()
 
 	http.HandleFunc("/v1/auth/register", registerHandler(db))
+	http.HandleFunc("/v1/salt/{email}", saltHandler(db))
 
 	log.Println("🔒 password-manager API listening on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
