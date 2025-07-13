@@ -6,12 +6,13 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
-	"golang.org/x/crypto/argon2"
 	"net/http"
 	"net/mail"
 	"strings"
+
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
+	"golang.org/x/crypto/argon2"
 )
 
 type registerationRequest struct {
@@ -121,7 +122,7 @@ func saltHandler(db *sqlx.DB) http.HandlerFunc {
 		if err != nil {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
-
+		salt := make([]byte, 16)
 		if count == 1 {
 			err := db.QueryRow("select salt from users where email=?", email).Scan(&salt)
 			fmt.Println(salt)
@@ -132,7 +133,6 @@ func saltHandler(db *sqlx.DB) http.HandlerFunc {
 			http.Error(w, "Wrong email address", http.StatusBadRequest)
 		}
 
-		salt := make([]byte, 16)
 		var res saltResponse
 		res.Salt = salt
 
