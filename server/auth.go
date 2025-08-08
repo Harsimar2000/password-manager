@@ -4,11 +4,16 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/mail"
 	"strings"
+
+	"crypto/subtle"
+	"encoding/base64"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
@@ -26,6 +31,17 @@ type registerationResponse struct {
 
 type saltResponse struct {
 	Salt []byte `json:"salt"`
+}
+
+type loginRequest struct {
+	Email   string `json:"email"`
+	PwdHash string `json:"pwd_hash"`
+}
+
+type loginResponse struct {
+	Access  string `json:"access"`
+	Refresh string `json:"refresh"`
+	VkEnc   string `json:"vk_enc"`
 }
 
 /* Argon2 parameter  */
@@ -50,7 +66,7 @@ func registerHandler(db *sqlx.DB) http.HandlerFunc {
 
 		if json.NewDecoder(r.Body).Decode(&req) != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
-			fmt.Println("asf")
+			return
 		}
 		req.Email = strings.TrimSpace(req.Email)
 		_, err := mail.ParseAddress(req.Email)
@@ -92,8 +108,10 @@ func registerHandler(db *sqlx.DB) http.HandlerFunc {
 			http.Error(w, "e-mail already in use", http.StatusBadRequest)
 			return
 		}
-		fmt.Println(hi)
-
+		// TO DO
+		if hi != nil {
+			fmt.Println("User registered successfully with ID:", userID)
+		}
 		//  Send JSON response
 		var res registerationResponse
 		res.UserID = userID
@@ -108,12 +126,16 @@ func saltHandler(db *sqlx.DB) http.HandlerFunc {
 
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
 		}
+
+		defer r.Body.Close()
 
 		email, found := strings.CutPrefix(r.URL.Path, "/v1/salt/")
 
 		if found == false {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
 		}
 
 		var count int
@@ -121,23 +143,79 @@ func saltHandler(db *sqlx.DB) http.HandlerFunc {
 
 		if err != nil {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
 		}
+
 		salt := make([]byte, 16)
 		if count == 1 {
 			err := db.QueryRow("select salt from users where email=?", email).Scan(&salt)
-			fmt.Println(salt)
 			if err != nil {
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
 			}
 		} else {
-			http.Error(w, "Wrong email address", http.StatusBadRequest)
+			http.Error(w, "Invalid Credentials", http.StatusBadRequest)
+			return
 		}
 
 		var res saltResponse
 		res.Salt = salt
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(res)
+	}
+}
+
+func loginHandler(db *sqlx.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+		defer r.Body.Close()
+
+		var req loginRequest
+		if json.NewDecoder(r.Body).Decode(&req) != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+
+		req.Email = strings.TrimSpace(req.Email)
+		_, err := mail.ParseAddress(req.Email)
+
+		if err != nil {
+			http.Error(w, "Invalid email address", http.StatusBadRequest)
+			return
+		}
+
+		var pwd_hash []byte
+		if err := db.QueryRow("SELECT pwd_hash FROM users WHERE email = ?", req.Email).Scan(&pwd_hash); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "invalid credentials", http.StatusUnauthorized)
+				return
+			}
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		client, err := base64.StdEncoding.DecodeString(req.PwdHash)
+
+		if err != nil {
+			http.Error(w, "invalid credentials", http.StatusBadRequest)
+			return
+		}
+
+		var res loginResponse
+
+		res.Access = "true"
+		res.Refresh = "true"
+		res.VkEnc = "true"
+
+		if subtle.ConstantTimeCompare(pwd_hash, client) != 1 {
+			http.Error(w, "invalid credentials", http.StatusUnauthorized)
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(res.Salt)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(res)
 	}
 }
